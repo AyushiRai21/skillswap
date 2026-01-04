@@ -20,6 +20,9 @@ Why? Users need to trust who they are learning from.
 
 Feature: Allow users to leave a 1-5 star rating and comment after a session.
 Implementation: New Review model linked to User. Display "Average Rating" on Profile cards.
+
+
+
 2. 🔔 Real-time Notifications
 Why? Users shouldn't have to refresh to see new messages or requests.
 
