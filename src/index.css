@@ -179,4 +179,103 @@ section {
 
 .skill-tag { padding:6px 10px; border-radius:999px; background:#f1f5f9; color:#0f172a; font-weight:600 }
 
+/* ---------------- Premium Design Utilities ---------------- */
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.125);
+}
+
+.glass-dark {
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mesh-gradient {
+  background-color: #ffffff;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(168, 71%, 90%, 1) 0, transparent 50%), 
+    radial-gradient(at 50% 0%, hsla(220, 100%, 94%, 1) 0, transparent 50%), 
+    radial-gradient(at 100% 0%, hsla(331, 100%, 94%, 1) 0, transparent 50%);
+}
+
+.mesh-gradient-dark {
+  background-color: #0f172a;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(168, 71%, 10%, 1) 0, transparent 50%), 
+    radial-gradient(at 50% 0%, hsla(220, 100%, 10%, 1) 0, transparent 50%), 
+    radial-gradient(at 100% 0%, hsla(331, 100%, 10%, 1) 0, transparent 50%);
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #0d9488 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ---------------- Premium Design Utilities ---------------- */
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.125);
+}
+
+.glass-dark {
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mesh-gradient-premium {
+  background-color: #f8fafc;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(168, 71%, 95%, 1) 0, transparent 50%), 
+    radial-gradient(at 100% 0%, hsla(220, 100%, 95%, 1) 0, transparent 50%), 
+    radial-gradient(at 100% 100%, hsla(331, 100%, 95%, 1) 0, transparent 50%), 
+    radial-gradient(at 0% 100%, hsla(250, 100%, 95%, 1) 0, transparent 50%);
+}
+
+.glow-teal {
+  box-shadow: 0 0 20px -5px rgba(20, 184, 166, 0.4);
+}
+
+.glow-blue {
+  box-shadow: 0 0 20px -5px rgba(59, 130, 246, 0.4);
+}
+
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+  100% { transform: translateY(0px); }
+}
+
+.animate-float-slow {
+  animation: float 6s ease-in-out infinite;
+}
+
+
+.glow-shadow-teal {
+  box-shadow: 0 0 25px -5px rgba(13, 148, 136, 0.3);
+}
+
+.glow-shadow-blue {
+  box-shadow: 0 0 25px -5px rgba(59, 130, 246, 0.3);
+}
+
+@keyframes slowRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-slow-rotate {
+  animation: slowRotate 20s linear infinite;
+}
+
+
 

@@ -24,12 +24,14 @@ export default function Chat({ user }) {
             const res = await fetch('http://localhost:5000/api/messages', {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
+            if (!res.ok) throw new Error('Failed to fetch messages');
             const data = await res.json();
 
             // Group by partner
             const groups = {};
             data.forEach(msg => {
                 const partner = msg.sender._id === user._id ? msg.recipient : msg.sender;
+                if (!partner) return;
                 const pid = partner._id;
                 if (!groups[pid]) {
                     groups[pid] = { partner, msgs: [] };
@@ -37,9 +39,10 @@ export default function Chat({ user }) {
                 groups[pid].msgs.push(msg);
             });
             setConversations(groups);
-            setLoading(false);
         } catch (err) {
-            console.error(err);
+            console.error('Error loading messages:', err);
+        } finally {
+            setLoading(false);
         }
     }
 

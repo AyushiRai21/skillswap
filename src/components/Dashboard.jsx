@@ -1,38 +1,59 @@
 import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import PageFade from './PageFade';
-import ExploreSkills from './ExploreSkills';
-import Chat from './Chat';
+import io from 'socket.io-client';
+import toast from 'react-hot-toast';
+const socket = io('http://localhost:5000');
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const storedUser = localStorage.getItem('user');
   const user = storedUser ? JSON.parse(storedUser) : null;
-  const [requests, setRequests] = useState([]);
-  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' or 'explore'
-  const [loading, setLoading] = useState(true);
+  const token = localStorage.getItem('token');
 
-  // animated stats
-  const [customersCount, setCustomersCount] = useState(0);
-  const [balanceCount, setBalanceCount] = useState(0);
-  // animated stat counters for visual flair
-  const [skillsCount, setSkillsCount] = useState(0);
-  const [requestsCount, setRequestsCount] = useState(0);
-  const [incomingCountState, setIncomingCountState] = useState(0);
-  const [eventsCountState, setEventsCountState] = useState(0);
+  const [requests, setRequests] = useState([]);
+  const [activeView, setActiveView] = useState('dashboard'); 
+  const [loading, setLoading] = useState(true);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+
+  async function loadData() {
+    try {
+      const res = await fetch('http://localhost:5000/api/requests');
+      const data = await res.json();
+      setRequests(data.requests || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch('http://localhost:5000/api/requests');
-        const data = await res.json();
-        setRequests(data.requests || []);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
+    if (!token) {
+      navigate('/login');
+      return;
     }
-    load();
-  }, []);
+    loadData();
+
+    if (user) {
+        socket.emit('join_user', user.id);
+        socket.on('new_notification', () => {
+             // Refresh data whenever something happens
+             loadData();
+        });
+        socket.on('online_users', (users) => {
+             setOnlineUsers(users);
+        });
+    }
+
+    return () => {
+        socket.off('new_notification');
+        socket.off('online_users');
+    };
+  }, [token, navigate, user]);
+
+  const [showReview, setShowReview] = useState(false);
+  const [targetReviewee, setTargetReviewee] = useState(null);
 
   const sampleProducts = [
     { title: 'Crypter - NFT UI Kit', price: '$3,250.00', status: 'Active' },
@@ -66,6 +87,14 @@ export default function Dashboard() {
           <div className="flex gap-2 mt-2">
             <button onClick={() => updateStatus('accepted')} className="px-3 py-1 bg-emerald-600 text-white rounded">Accept</button>
             <button onClick={() => updateStatus('rejected')} className="px-3 py-1 border rounded">Decline</button>
+            {status === 'accepted' && (
+               <button 
+                onClick={() => { setTargetReviewee(r.tutorId || r.tutor); setShowReview(true); }}
+                className="px-3 py-1 bg-indigo-600 text-white rounded font-bold"
+               >
+                 Review Guru
+               </button>
+            )}
             <button onClick={() => setOpen(!open)} className="px-2 py-1 text-sm text-gray-500">{open ? 'Hide' : 'Details'}</button>
           </div>
         </div>
@@ -140,24 +169,39 @@ export default function Dashboard() {
   });
   const [showAdd, setShowAdd] = useState(false);
   const [showRequestForm, setShowRequestForm] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   function persistSkills(next) { setSkills(next); localStorage.setItem(skillsKey, JSON.stringify(next)); }
   function persistEvent(ev) { const next = [ev, ...events].slice(0, 50); setEvents(next); localStorage.setItem(eventsKey, JSON.stringify(next)); }
 
   const [allSkills, setAllSkills] = useState([]);
-  const [matches, setMatches] = useState([]);
+  const [matches, setMatches] = useState({ perfect: [], partial: [] });
+  const [leaderboard, setLeaderboard] = useState([]);
 
   useEffect(() => {
-    // Fetch all skills for matching
-    fetch('http://localhost:5000/api/skills')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) setAllSkills(data);
+    if (user && token) {
+      // Fetch AI Matches
+      fetch('http://localhost:5000/api/match', {
+        headers: { 'Authorization': `Bearer ${token}` }
       })
-      .catch(err => console.error(err));
-  }, []);
+        .then(res => res.json())
+        .then(data => {
+          setMatches(data);
+        })
+        .catch(err => console.error("Match fetch failed", err));
 
-  // Placeholder for useEffect matching logic - removing from here to place after myRequests definition
+      // Fetch Leaderboard
+      fetch('http://localhost:5000/api/users/leaderboard')
+        .then(res => res.json())
+        .then(data => {
+          setLeaderboard(data.slice(0, 5));
+        })
+        .catch(err => console.error("Leaderboard fetch failed", err));
+    }
+  }, [user, token]);
+
+
+
 
   async function addSkill(payload) {
     try {
@@ -184,7 +228,7 @@ export default function Dashboard() {
   }
 
   function handleRequestStatusChange(r, status) {
-    persistEvent({ type: 'request.status', text: `${r.requesterName || r.requesterEmail} - ${r.skillTitle} → ${status}`, time: Date.now() });
+    persistEvent({ type: 'request.status', text: `${r.requesterName || r.requesterEmail} - ${r.skillTitle} →  \${status}`, time: Date.now() });
     // send status update to backend and sync local state
     (async () => {
       try {
@@ -206,290 +250,371 @@ export default function Dashboard() {
   const incoming = user ? requests.filter(r => (r.tutor === user.email || r.tutorEmail === user.email || r.tutor === user.name)) : [];
   const myRequests = user ? requests.filter(r => (r.requesterEmail === user.email || r.requesterName === user.name)) : [];
 
-  useEffect(() => {
-    if (user && myRequests.length > 0 && allSkills.length > 0) {
-      // Simple matching logic: Find skills that match the title of my requests
-      const newMatches = [];
-      myRequests.forEach(req => {
-        const potentialTutors = allSkills.filter(s =>
-          s.user && s.user._id !== user._id && // Not me
-          (s.title.toLowerCase().includes(req.skillTitle.toLowerCase()) ||
-            req.skillTitle.toLowerCase().includes(s.title.toLowerCase()))
-        );
-        potentialTutors.forEach(tutorSkill => {
-          newMatches.push({ request: req, match: tutorSkill });
-        });
-      });
-      // Deduplicate matches
-      const uniqueMatches = Array.from(new Set(newMatches.map(m => m.match._id)))
-        .map(id => newMatches.find(m => m.match._id === id));
-
-      setMatches(uniqueMatches);
-    }
-  }, [user, myRequests, allSkills]);
-
   return (
-    <PageFade className="min-h-screen bg-gray-50 py-12 px-6">
-      <div className="max-w-7xl mx-auto grid grid-cols-12 gap-6">
-        {/* Left sidebar inside dashboard */}
-        <aside className="col-span-2 hidden lg:block">
-          <div className="bg-white rounded-2xl p-4 shadow sticky top-28">
-            <ul className="space-y-2 text-sm text-gray-600">
-              <li className={`p-3 rounded-lg cursor-pointer ${activeView === 'dashboard' ? 'bg-emerald-50 font-medium' : 'hover:bg-gray-50'}`} onClick={() => setActiveView('dashboard')}>Dashboard</li>
-              <li className={`p-3 rounded-lg cursor-pointer ${activeView === 'explore' ? 'bg-emerald-50 font-medium' : 'hover:bg-gray-50'}`} onClick={() => setActiveView('explore')}>Explore Skills</li>
-              <li className={`p-3 rounded-lg cursor-pointer ${activeView === 'messages' ? 'bg-emerald-50 font-medium' : 'hover:bg-gray-50'}`} onClick={() => setActiveView('messages')}>Messages</li>
-              <li className="p-3 rounded-lg hover:bg-gray-50 cursor-pointer" onClick={() => setShowAdd(true)}>Offer Skill</li>
-              <li className="p-3 rounded-lg hover:bg-gray-50 cursor-pointer" onClick={() => setShowRequestForm(true)}>Exchange</li>
-            </ul>
+    <PageFade className="min-h-screen mesh-gradient-premium py-24 px-4 sm:px-8">
+      {/* Floating Top Nav */}
+      <nav className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[95%] max-w-7xl">
+        <div className="glass px-8 py-4 rounded-[30px] border-white/60 shadow-2xl flex items-center justify-between">
+          <div className="flex items-center gap-8">
+            <Link to="/" className="text-2xl font-black italic tracking-tighter text-slate-900 flex items-center gap-2 group">
+              <div className="w-8 h-8 bg-slate-900 rounded-lg group-hover:rotate-12 transition-transform shadow-lg" />
+              SKILLSWAP
+            </Link>
+            <div className="hidden md:flex gap-6">
+              <Link to="/dashboard" className="text-[10px] font-black uppercase tracking-widest text-teal-600 border-b-2 border-teal-500 pb-1">Dashboard</Link>
+              <Link to="/roadmap" className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors">Roadmap AI</Link>
+              <Link to="/browse" className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors">Explore</Link>
+            </div>
           </div>
-        </aside>
+          <div className="flex items-center gap-4">
+            <Link to="/profile" className="px-4 py-2 bg-slate-100/50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-white transition-all">Account</Link>
+            <Link to="/" onClick={() => { localStorage.clear(); }} className="px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-600 transition-all">Logout</Link>
+          </div>
+        </div>
+      </nav>
 
-        {/* Main content (center) */}
-        <main className="col-span-12 lg:col-span-7">
-          {activeView === 'explore' ? (
-            <ExploreSkills />
-          ) : activeView === 'messages' ? (
-            <Chat user={user} />
-          ) : (
-            <div className="w-full animate-page-fade">
-              {/* Header / Hero */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-                <div>
-                  <h1 className="text-3xl lg:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 headline-reveal">
-                    Hello, {user.name || 'User'}!
-                  </h1>
-                  <p className="text-gray-500 mt-2 animate-float" style={{ animationDelay: '100ms' }}>
-                    Ready to learn or teach something new today?
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3 animate-float" style={{ animationDelay: '200ms' }}>
-                  <button
-                    onClick={() => setShowAdd(true)}
-                    className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-xl shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all font-semibold flex items-center gap-2"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
-                    Offer Skill
-                  </button>
-                  <button
-                    onClick={() => setShowRequestForm(true)}
-                    className="px-6 py-3 bg-white border border-gray-200 text-gray-700 rounded-xl shadow-sm hover:shadow-md hover:-translate-y-1 transition-all font-semibold flex items-center gap-2"
-                  >
-                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
-                    Exchange
-                  </button>
-                </div>
+      <div className="max-w-[1600px] mx-auto pt-10">
+        
+        {/* Header Hero */}
+        <header className="flex flex-col lg:flex-row lg:items-center justify-between mb-12 gap-8">
+          <div className="animate-float">
+            <h1 className="text-5xl lg:text-7xl font-black text-slate-900 tracking-tighter mb-4">
+              Hello, <span className="text-teal-600 headline-reveal">{(user && user.name) || 'Swapper'}!</span>
+            </h1>
+            <div className="flex flex-wrap gap-4 items-center">
+              <div className="px-4 py-2 bg-white/60 backdrop-blur-md rounded-2xl border border-white/50 shadow-sm flex items-center gap-2 hover:scale-105 transition-transform cursor-pointer">
+                <span className="text-2xl">🔥</span>
+                <span className="font-bold text-slate-700 tracking-tight">{(user && user.streak) || 0} Day Streak</span>
               </div>
+              <div className="px-4 py-2 bg-white/60 backdrop-blur-md rounded-2xl border border-white/50 shadow-sm flex items-center gap-2 hover:scale-105 transition-transform cursor-pointer">
+                <span className="text-2xl">⚡</span>
+                <span className="font-bold text-slate-700 tracking-tight">Level {(user && user.level) || 1}</span>
+              </div>
+              <div className="px-4 py-2 bg-indigo-500 text-white rounded-2xl shadow-lg glow-indigo flex items-center gap-2 hover:scale-105 transition-transform cursor-pointer">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-100"></span>
+                </span>
+                <span className="font-bold tracking-tight">{onlineUsers.length} Online Now</span>
+              </div>
+              <div className="px-4 py-2 bg-teal-500 text-white rounded-2xl shadow-lg glow-teal flex items-center gap-2 hover:scale-105 transition-transform cursor-pointer">
+                <span className="text-2xl">✨</span>
+                <span className="font-bold tracking-tight">{(user && user.points) || 0} Karma Pts</span>
+              </div>
+              <Link to="/profile" className="text-sm font-bold text-teal-600 hover:bg-teal-50 px-4 py-2 rounded-2xl border border-teal-200 transition-all">
+                Update Profile →
+              </Link>
+            </div>
+          </div>
 
-              {/* Dashboard Grid */}
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+          <div className="flex gap-4">
+            <button 
+              onClick={() => setShowAdd(true)}
+              className="px-8 py-5 bg-slate-900 text-white rounded-3xl font-black text-xl hover:bg-slate-800 transition-all hover:scale-105 active:scale-95 shadow-2xl flex items-center gap-3"
+            >
+              Offer Skill
+              <svg className="w-6 h-6 border-2 border-white rounded-full p-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4"/></svg>
+            </button>
+            <Link 
+              to="/roadmap"
+              className="px-8 py-5 bg-teal-500 text-white rounded-3xl font-black text-xl hover:bg-teal-600 transition-all hover:scale-105 active:scale-95 shadow-2xl glow-teal flex items-center gap-3"
+            >
+              AI Roadmap
+              <span className="text-2xl">🪄</span>
+            </Link>
+          </div>
+        </header>
 
-                {/* Left Column: Requests & Priority Items (Span 2) */}
-                <div className="xl:col-span-2 space-y-8">
-
-                  {/* Incoming Requests */}
-                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 card-animate" style={{ animationDelay: '300ms' }}>
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                        <span className="w-2 h-8 bg-emerald-500 rounded-full"></span>
-                        Incoming Requests
-                      </h3>
-                      <span className="text-xs font-medium px-2 py-1 bg-gray-100 rounded text-gray-500">
-                        {incoming.length} pending
-                      </span>
+        {/* Bento Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+          
+          {/* Incoming Swap Requests - Span 2 */}
+          <div className="md:col-span-2 bg-white/80 backdrop-blur-xl border border-white rounded-[40px] p-8 shadow-sm hover:shadow-xl transition-all h-full flex flex-col group">
+            <div className="flex items-center justify-between mb-8">
+              <h3 className="text-3xl font-black tracking-tight text-slate-800">Incoming <span className="text-teal-600 italic">Swaps</span></h3>
+              <div className="bg-teal-100 text-teal-700 font-black px-4 py-1 rounded-full text-xs animate-pulse">
+                {incoming.length} ACTIVE
+              </div>
+            </div>
+            
+            <div className="flex-1 space-y-4">
+              {incoming.map((r, idx) => (
+                <div key={idx} className="p-5 bg-slate-50/50 rounded-3xl border border-slate-100 hover:border-teal-300 transition-all hover:translate-x-2">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <div className="font-black text-slate-800 text-lg uppercase tracking-tight">{r.skillTitle}</div>
+                      <div className="text-slate-500 font-medium">{r.requesterName} wants to learn</div>
                     </div>
-
-                    {loading && <div className="text-center py-8 text-gray-400">Loading...</div>}
-                    {!loading && incoming.length === 0 && (
-                      <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed">
-                        <p className="text-gray-500">No incoming requests yet. Share your profile!</p>
-                      </div>
-                    )}
-                    <div className="space-y-3">
-                      {incoming.map((r, idx) => (
-                        <InteractiveRequestRow key={r._id} r={r} onStatusChange={handleRequestStatusChange} />
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* My Learning Requests */}
-                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 card-animate" style={{ animationDelay: '400ms' }}>
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                        <span className="w-2 h-8 bg-rose-500 rounded-full"></span>
-                        Skills I Want to Learn
-                      </h3>
-                      <button onClick={() => setShowRequestForm(true)} className="text-sm text-emerald-600 font-medium hover:underline">+ New Request</button>
-                    </div>
-
-                    {myRequests.length === 0 ? (
-                      <div className="text-center py-8 bg-gray-50 rounded-xl border border-dashed">
-                        <p className="text-gray-500 mb-2">You haven't asked to learn anything yet.</p>
-                        <button onClick={() => setShowRequestForm(true)} className="text-emerald-600 font-semibold text-sm">Make a Request</button>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {myRequests.map(r => (
-                          <div key={r._id} className="p-4 border border-gray-100 rounded-xl hover:shadow-md transition-all flex justify-between items-start">
-                            <div>
-                              <div className="font-bold text-gray-800">{r.skillTitle}</div>
-                              <div className="text-sm text-gray-500 mt-1 line-clamp-2">{r.message || 'No details'}</div>
-                            </div>
-                            <div className={`text-xs px-2 py-1 rounded capitalize ${r.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{r.status || 'pending'}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-
-                {/* Right Column: Inventory & Stats (Span 1) */}
-                <div className="space-y-8">
-
-                  {/* Smart Matches / Recommendations */}
-                  {matches.length > 0 && (
-                    <div className="bg-gradient-to-b from-emerald-50 to-white rounded-2xl p-6 shadow-sm border border-emerald-100 animate-fade-in">
-                      <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                        <span className="text-xl">✨</span> Recommended for You
-                      </h3>
-                      <div className="space-y-4">
-                        {matches.slice(0, 3).map((m, idx) => (
-                          <div key={idx} className="bg-white p-3 rounded-xl border border-emerald-100 shadow-sm hover:shadow-md transition">
-                            <div className="font-semibold text-gray-800">{m.match.title}</div>
-                            <div className="text-xs text-gray-500 mt-1">Tutor: {m.match.user ? m.match.user.name : 'Unknown'}</div>
-                            <button
-                              onClick={() => { setActiveView('messages'); /* ideally open chat with this user */ }}
-                              className="mt-2 text-xs font-semibold text-emerald-600 hover:text-emerald-700"
-                            >
-                              Message Tutor
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* My Offered Skills */}
-                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 card-animate" style={{ animationDelay: '500ms' }}>
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-bold text-gray-800">My Skills</h3>
-                      <button onClick={() => setShowAdd(true)} className="w-8 h-8 flex items-center justify-center rounded-full bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-colors">+</button>
-                    </div>
-
-                    {skills.length === 0 ? (
-                      <div className="text-center py-8 text-sm text-gray-500">
-                        No skills added.
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {skills.map((s, idx) => (
-                          <div key={idx} className="flex items-start gap-4 p-3 rounded-xl hover:bg-gray-50 transition-colors cursor-default group">
-                            <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600 font-bold shrink-0">
-                              {s.title.charAt(0)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="font-semibold text-gray-800 truncate">{s.title}</div>
-                              <div className="text-xs text-gray-500">{s.level} • {s.desc}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <button onClick={() => setShowAdd(true)} className="w-full mt-4 py-2 text-sm text-emerald-600 font-medium border border-emerald-100 rounded-lg hover:bg-emerald-50 transition-colors">
-                      Add New Skill
+                    <button 
+                      onClick={() => handleRequestStatusChange(r, 'accepted')}
+                      className="px-6 py-2 bg-teal-600 text-white font-bold rounded-2xl hover:bg-teal-700 transition"
+                    >
+                      Swap Now
                     </button>
                   </div>
-
-                  {/* Recent Activity */}
-                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 card-animate" style={{ animationDelay: '600ms' }}>
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">Recent Activity</h3>
-                    <div className="relative pl-4 border-l-2 border-gray-100 space-y-6">
-                      <div className="relative">
-                        <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-emerald-200 border-2 border-white"></div>
-                        <p className="text-sm text-gray-600"><span className="font-medium text-gray-900">John</span> requested Web Dev.</p>
-                        <span className="text-xs text-gray-400">2h ago</span>
-                      </div>
-                      <div className="relative">
-                        <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-blue-200 border-2 border-white"></div>
-                        <p className="text-sm text-gray-600"><span className="font-medium text-gray-900">Sarah</span> accepted Photo.</p>
-                        <span className="text-xs text-gray-400">1d ago</span>
-                      </div>
-                    </div>
-                  </div>
-
                 </div>
-              </div>
-
-              {/* Modals */}
-              {showRequestForm && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center dialog-pop">
-                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowRequestForm(false)} />
-                  <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8 z-10">
-                    <div className="flex items-center justify-between mb-6">
-                      <h4 className="text-2xl font-bold text-gray-800">Request a Skill</h4>
-                      <button onClick={() => setShowRequestForm(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-                        <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                      </button>
-                    </div>
-                    <RequestForm onCreate={async (payload) => {
-                      try {
-                        const body = { ...payload, requesterName: user.name, requesterEmail: user.email };
-                        const res = await fetch('http://localhost:5000/api/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-                        if (!res.ok) throw new Error('Failed to create request');
-                        const data = await res.json();
-                        const created = data.request;
-                        setRequests(prev => [created, ...prev]);
-                        persistEvent({ type: 'request.create', text: `You requested: ${created.skillTitle}`, time: Date.now() });
-                        setShowRequestForm(false);
-                      } catch (err) {
-                        console.error(err);
-                        alert('Could not create request');
-                      }
-                    }} onCancel={() => setShowRequestForm(false)} />
-                  </div>
+              ))}
+              {incoming.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+                  <span className="text-6xl mb-4 grayscale opacity-50">📫</span>
+                  <p className="font-bold">Inbox is currently quiet.</p>
                 </div>
               )}
-
-              {showAdd && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center dialog-pop">
-                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowAdd(false)} />
-                  <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8 z-10">
-                    <div className="flex items-center justify-between mb-6">
-                      <h4 className="text-2xl font-bold text-gray-800">Offer a Skill</h4>
-                      <button onClick={() => setShowAdd(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-                        <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                      </button>
-                    </div>
-                    <AddSkillForm onAdd={addSkill} onCancel={() => setShowAdd(false)} />
-                  </div>
-                </div>
-              )}
-
             </div>
-          )}
-        </main>
+          </div>
 
-        {/* Removed static products panel — interactive summary shown in main */}
+          {/* AI Matching - Span 1 */}
+          <div className="bg-slate-900 rounded-[40px] p-8 shadow-2xl flex flex-col justify-between overflow-hidden relative border border-slate-800 group">
+            <div className="absolute top-0 right-0 p-8 opacity-20 pointer-events-none group-hover:scale-150 transition-transform duration-700">
+               <svg className="w-40 h-40 text-teal-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.18L12 21z"/></svg>
+            </div>
+            <div className="relative z-10">
+              <div className="text-[10px] font-black text-teal-500 uppercase tracking-widest mb-2">Neural Match Engine</div>
+              <h3 className="text-2xl font-black text-white mb-2 leading-tight">AI Matching</h3>
+              <p className="text-slate-400 font-medium mb-8 text-sm italic">Perfect swaps found for you.</p>
+              
+              <div className="space-y-4">
+                {((matches?.perfect?.length || 0) > 0 ? matches.perfect : (matches?.partial || [])).slice(0, 3).map((match, idx) => (
+                  <div key={idx} className="flex items-center gap-4 bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/5 hover:bg-white/20 transition cursor-pointer group">
+                    <img src={match.profileImage || `https://api.dicebear.com/7.x/avataaars/svg?seed=${match.name}`} className="w-10 h-10 rounded-full border-2 border-teal-500/50" alt="" />
+                    <div className="overflow-hidden">
+                      <div className="text-white font-black text-xs truncate uppercase italic">{match.name}</div>
+                      <div className="text-teal-400 text-[10px] font-black uppercase tracking-widest truncate">Offers: {match.skillsOffered?.[0] || 'Skill'}</div>
+                    </div>
+                  </div>
+                ))}
+                {(!matches?.perfect?.length && !matches?.partial?.length) && (
+                   <div className="text-[10px] text-slate-500 font-bold italic py-4 opacity-50">Searching for neural links...</div>
+                )}
+              </div>
+            </div>
+            <Link to="/browse" className="w-full mt-6 py-4 bg-teal-500 text-white font-black rounded-[25px] hover:bg-teal-400 transition-all uppercase tracking-widest text-xs text-center shadow-lg transform active:scale-95">
+               Expand Hub
+            </Link>
+          </div>
+
+          {/* Leaderboard - Span 1 */}
+          <div className="bg-white rounded-[40px] p-8 shadow-sm border border-slate-100 flex flex-col justify-between group">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-2xl font-black text-slate-800 tracking-tighter uppercase italic">Top <span className="text-teal-600">Gurus</span></h3>
+                <span className="text-xs font-black text-slate-400">Karma</span>
+              </div>
+              <div className="space-y-4">
+                {leaderboard.map((u, i) => (
+                  <div key={i} className="flex items-center justify-between group/row">
+                    <div className="flex items-center gap-3">
+                      <span className={`text-xs font-black w-4 ${i === 0 ? 'text-yellow-500' : 'text-slate-300'}`}>{i + 1}</span>
+                      <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 overflow-hidden flex-shrink-0">
+                        <img src={u.profileImage || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.name}`} className="w-full h-full object-cover" alt="" />
+                      </div>
+                      <span className="text-xs font-black text-slate-600 group-hover/row:text-teal-600 transition-colors">{u.name}</span>
+                    </div>
+                    <span className="text-xs font-black text-slate-900">{u.karma || 0}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="mt-8 pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-400">
+               <span>Vetted Swappers</span>
+               <span className="text-teal-500">View All</span>
+            </div>
+          </div>
+          
+        </div>
+
+        {/* Section Lower: My Inventory */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          <div className="lg:col-span-2">
+            <h4 className="text-3xl font-black text-slate-800 mb-8 uppercase tracking-tighter flex items-center gap-3">
+              <span className="w-4 h-4 bg-teal-500 rounded-full glow-teal"></span>
+              Inventory <span className="text-slate-300">Of My Skills</span>
+            </h4>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {skills.map((s, idx) => (
+                <div key={idx} className="group glass border border-white/80 p-6 rounded-[35px] hover:shadow-2xl hover:scale-105 transition-all duration-300 flex justify-between items-center cursor-default">
+                  <div>
+                    <div className="text-xs font-black text-teal-600 uppercase tracking-[0.2em] mb-1">{s.level}</div>
+                    <div className="text-2xl font-black text-slate-800">{s.title}</div>
+                    <div className="text-sm text-slate-500 font-medium line-clamp-1">{s.desc}</div>
+                  </div>
+                  <div className="w-14 h-14 bg-slate-900 text-white rounded-2xl flex items-center justify-center text-2xl group-hover:bg-teal-500 transition-colors">
+                    {s.title.charAt(0)}
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => setShowAdd(true)} className="border-4 border-dashed border-slate-200 rounded-[35px] p-6 hover:bg-white hover:border-teal-400 transition-all flex flex-col items-center justify-center text-slate-300 hover:text-teal-500">
+                <span className="text-4xl mb-1">+</span>
+                <span className="font-black uppercase tracking-widest text-xs">List New Talent</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+             <h4 className="text-3xl font-black text-slate-800 mb-8 uppercase tracking-tighter">Activity <span className="text-slate-300">Log</span></h4>
+             <div className="space-y-6">
+                {events.slice(0, 4).map((ev, i) => (
+                  <div key={i} className="flex gap-4 items-start pb-6 border-b border-slate-200 last:border-b-0 group">
+                    <div className="w-2 h-2 rounded-full bg-slate-900 mt-2 group-hover:scale-150 transition-transform"></div>
+                    <div>
+                      <div className="font-bold text-slate-800">{ev.text}</div>
+                      <div className="text-xs text-slate-400 font-black">{new Date(ev.time).toLocaleTimeString()}</div>
+                    </div>
+                  </div>
+                ))}
+                {events.length === 0 && (
+                  <p className="text-slate-400 font-bold italic">No recent log entries.</p>
+                )}
+             </div>
+          </div>
+        </div>
+
       </div>
+
+      {/* Modern Modals Context */}
+      {showAdd && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-lg backdrop-saturate-150" onClick={() => setShowAdd(false)} />
+          <div className="relative bg-white rounded-[40px] shadow-2xl w-full max-w-xl p-10 overflow-hidden">
+            <h4 className="text-3xl font-black text-slate-900 mb-6 italic tracking-tighter">Share your <span className="text-teal-600 underline">Gifts</span></h4>
+            <AddSkillForm onAdd={addSkill} onCancel={() => setShowAdd(false)} />
+          </div>
+        </div>
+      )}
+
+      {showRequestForm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-lg backdrop-saturate-150" onClick={() => setShowRequestForm(false)} />
+          <div className="relative bg-white rounded-[40px] shadow-2xl w-full max-w-xl p-10 overflow-hidden">
+            <h4 className="text-3xl font-black text-slate-900 mb-6 italic tracking-tighter">What are talking <span className="text-teal-600 underline">about?</span></h4>
+            <RequestForm onCreate={async (payload) => {
+              try {
+                const body = { ...payload, requesterName: user.name, requesterEmail: user.email };
+                const res = await fetch('http://localhost:5000/api/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                if (!res.ok) throw new Error('Failed to create request');
+                const data = await res.json();
+                const created = data.request;
+                setRequests(prev => [created, ...prev]);
+                persistEvent({ type: 'request.create', text: `Request sent: ${created.skillTitle}`, time: Date.now() });
+                setShowRequestForm(false);
+              } catch (err) {
+                alert('Could not create request');
+              }
+            }} onCancel={() => setShowRequestForm(false)} />
+          </div>
+        </div>
+      )}
+
+      {showReview && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-lg" onClick={() => setShowReview(false)} />
+          <div className="relative bg-white rounded-[40px] shadow-2xl w-full max-w-md p-10 overflow-hidden">
+            <h4 className="text-2xl font-black text-slate-900 mb-6 italic tracking-tighter">Rate your <span className="text-teal-600">Guru</span></h4>
+             <ReviewForm 
+                reviewee={targetReviewee} 
+                onClose={() => setShowReview(false)} 
+                onSuccess={() => {
+                   toast.success('Karma Points Awarded! Badge Level UP! 🛡️', { icon: '🔥', duration: 4000 });
+                }}
+            />
+          </div>
+        </div>
+      )}
+
     </PageFade>
   );
 }
+
+function ReviewForm({ reviewee, onClose, onSuccess }) {
+    const [rating, setRating] = useState(5);
+    const [comment, setComment] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    const submit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('http://localhost:5000/api/reviews', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ revieweeId: reviewee, rating, comment })
+            });
+            if (res.ok) {
+                onSuccess();
+                onClose();
+            } else {
+                toast.error('Review submission failed.');
+            }
+        } catch (e) {
+            toast.error('Network Error during review.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <form onSubmit={submit} className="space-y-6">
+            <div className="flex justify-center gap-4 text-3xl">
+                {[1, 2, 3, 4, 5].map((star) => (
+                    <button 
+                        key={star} 
+                        type="button"
+                        onClick={() => setRating(star)}
+                        className={`transition-all hover:scale-125 ${rating >= star ? 'scale-110 opacity-100' : 'opacity-20 grayscale'}`}
+                    >
+                        {star <= rating ? '⭐' : '☆'}
+                    </button>
+                ))}
+            </div>
+            <textarea 
+                value={comment} 
+                onChange={(e) => setComment(e.target.value)} 
+                className="w-full p-4 bg-slate-50 border rounded-2xl text-sm italic" 
+                placeholder="What did you learn? Was the mentor helpful?"
+            />
+            <div className="flex gap-4">
+                 <button type="submit" disabled={loading} className="flex-1 py-4 bg-slate-900 text-white rounded-3xl font-black uppercase tracking-widest text-xs hover:bg-teal-600 transition shadow-xl">
+                    {loading ? 'Submitting...' : 'Confirm Review'}
+                 </button>
+            </div>
+        </form>
+    );
+}
+
+const categories = [
+  'Programming', 'Technology', 'Design', 'Music', 'Cooking',
+  'Language', 'Photography', 'Marketing', 'Fitness', 'Arts',
+  'Writing', 'Personal Dev', 'Other'
+];
 
 function AddSkillForm({ onAdd, onCancel }) {
   const [title, setTitle] = useState('');
   const [level, setLevel] = useState('Beginner');
   const [desc, setDesc] = useState('');
+  const [category, setCategory] = useState('Technology');
+
   function submit(e) {
     e.preventDefault();
     if (!title) return alert('Enter a title');
-    onAdd({ title, level, desc });
+    onAdd({ title, level, desc, category });
   }
   return (
     <form onSubmit={submit} className="space-y-3">
       <div>
         <label className="text-sm text-gray-600">Skill</label>
-        <input value={title} onChange={e => setTitle(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded input-glow" />
+        <input value={title} onChange={e => setTitle(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded input-glow" placeholder="e.g. React.js" />
+      </div>
+      <div>
+        <label className="text-sm text-gray-600">Category</label>
+        <select value={category} onChange={e => setCategory(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded">
+          {categories.map(c => <option key={c}>{c}</option>)}
+        </select>
       </div>
       <div>
         <label className="text-sm text-gray-600">Level</label>
@@ -497,11 +622,12 @@ function AddSkillForm({ onAdd, onCancel }) {
           <option>Beginner</option>
           <option>Intermediate</option>
           <option>Advanced</option>
+          <option>Expert</option>
         </select>
       </div>
       <div>
         <label className="text-sm text-gray-600">Short description</label>
-        <input value={desc} onChange={e => setDesc(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded" />
+        <input value={desc} onChange={e => setDesc(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded" placeholder="What will you teach?" />
       </div>
       <div className="flex gap-2">
         <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded">Add Skill</button>
@@ -515,6 +641,7 @@ function RequestForm({ onCreate, onCancel }) {
   const [skillTitle, setSkillTitle] = useState('');
   const [tutor, setTutor] = useState('');
   const [message, setMessage] = useState('');
+  const [category, setCategory] = useState('Technology');
   const [loading, setLoading] = useState(false);
 
   async function submit(e) {
@@ -522,23 +649,29 @@ function RequestForm({ onCreate, onCancel }) {
     if (!skillTitle) return alert('Enter a skill title');
     setLoading(true);
     try {
-      await onCreate({ skillTitle, tutor, message });
+      await onCreate({ skillTitle, tutor, message, skillCategory: category });
     } finally { setLoading(false); }
   }
 
   return (
     <form onSubmit={submit} className="space-y-3">
       <div>
-        <label className="text-sm text-gray-600">Skill</label>
-        <input value={skillTitle} onChange={e => setSkillTitle(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded" />
+        <label className="text-sm text-gray-600">Skill (What do you want to learn?)</label>
+        <input value={skillTitle} onChange={e => setSkillTitle(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded" placeholder="e.g. French Conversation" />
+      </div>
+      <div>
+        <label className="text-sm text-gray-600">Category</label>
+        <select value={category} onChange={e => setCategory(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded">
+          {categories.map(c => <option key={c}>{c}</option>)}
+        </select>
       </div>
       <div>
         <label className="text-sm text-gray-600">Preferred Tutor (optional)</label>
-        <input value={tutor} onChange={e => setTutor(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded" />
+        <input value={tutor} onChange={e => setTutor(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded" placeholder="Name of tutor if known" />
       </div>
       <div>
         <label className="text-sm text-gray-600">Message</label>
-        <textarea value={message} onChange={e => setMessage(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded" rows={4} />
+        <textarea value={message} onChange={e => setMessage(e.target.value)} className="w-full mt-1 px-3 py-2 border rounded" rows={3} placeholder="Describe what you need help with..." />
       </div>
       <div className="flex gap-2">
         <button type="submit" disabled={loading} className="px-4 py-2 bg-emerald-600 text-white rounded">{loading ? 'Requesting…' : 'Request Skill'}</button>

@@ -34,8 +34,8 @@ export default function Footer({ onOpenGuidelines, onOpenFAQ }) {
           <div>
             <h4 className="font-semibold text-white mb-3">Resources</h4>
             <ul className="space-y-2 text-sm text-slate-300">
-              <li className="hover:text-white cursor-pointer">Help Center</li>
-              <li className="hover:text-white cursor-pointer">Blog</li>
+              <li className="hover:text-white cursor-pointer"><a href="/help">Help Center</a></li>
+              <li className="hover:text-white cursor-pointer"><a href="/help">Blog</a></li>
               <li className="hover:text-white cursor-pointer" onClick={(e) => { e.preventDefault(); if (onOpenGuidelines) onOpenGuidelines(); }}>Guidelines</li>
               <li className="hover:text-white cursor-pointer" onClick={(e) => { e.preventDefault(); if (onOpenFAQ) onOpenFAQ(); }}>FAQs</li>
             </ul>
