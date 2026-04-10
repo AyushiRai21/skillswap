@@ -100,4 +100,4 @@ skillswap/
 
 ---
 
-Made with ❤️ by the SkillSwap Team.
+
